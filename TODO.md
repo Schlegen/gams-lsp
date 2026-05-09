@@ -95,11 +95,10 @@ The Python dataclasses map 1-to-1 to Rust structs (the Python source says so
 explicitly). Use `enum` for `TokenKind`/`DirectiveNode` variants.
 
 Tasks:
-- [ ] `types.rs`: port all structs and enums from `dollar-lexer-gams/types.py`
-- [ ] `lexer.rs`: port `_DIRECTIVE_PATTERNS` + lexer loop; add `*` comment detection
-- [ ] `evaluator.rs`: port `interpolate()` and condition evaluator with optimistic policy
-- [ ] Unit tests mirroring the Python behaviour (at minimum: set/get, ifthen known,
-      ifthen unknown, include, * comment stripping)
+- [x] `types.rs`: port all structs and enums from `dollar-lexer-gams/types.py`
+- [x] `lexer.rs`: port `_DIRECTIVE_PATTERNS` + lexer loop; add `*` comment detection
+- [x] `evaluator.rs`: port `interpolate()` and condition evaluator with optimistic policy
+- [x] Unit tests mirroring the Python behaviour (18 tests, all passing)
 
 ---
 

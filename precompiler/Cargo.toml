@@ -1,0 +1,11 @@
+[package]
+name = "gams-precompiler"
+version = "0.1.0"
+edition = "2021"
+description = "GAMS dollar-directive precompiler: lexer and condition evaluator"
+
+[dependencies]
+regex = "1"
+
+[dev-dependencies]
+tempfile = "3"
