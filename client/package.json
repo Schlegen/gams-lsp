@@ -1,0 +1,31 @@
+{
+  "name": "gams-lsp-client",
+  "displayName": "GAMS Language Support",
+  "description": "Language server support for the GAMS modelling language",
+  "version": "0.1.0",
+  "engines": { "vscode": "^1.85.0" },
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "gams",
+        "aliases": ["GAMS", "gams"],
+        "extensions": [".gms", ".gms2"],
+        "configuration": "./language-configuration.json"
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p tsconfig.json",
+    "watch": "tsc -watch -p tsconfig.json"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  }
+}
