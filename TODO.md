@@ -126,10 +126,10 @@ Implement LSP handlers that actually do work:
 - `textDocument/didClose` → evict from store
 
 Tasks:
-- [ ] `document.rs` + `store.rs` skeleton
-- [ ] Wire `didOpen` / `didChange` / `didClose` in `backend.rs`
-- [ ] Incremental reparse using tree-sitter's `edit` + `reparse` API
-- [ ] `$include` resolution: load included files into the store recursively
+- [x] `document.rs` + `store.rs` skeleton
+- [x] Wire `didOpen` / `didChange` / `didClose` in `backend.rs`
+- [x] Incremental reparse using tree-sitter's `edit` + `reparse` API
+- [x] `$include` resolution: load included files into the store recursively
       (detect cycles to avoid infinite loops)
 
 ---

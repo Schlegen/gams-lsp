@@ -1,14 +1,22 @@
+use std::sync::Mutex;
+
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 
+use crate::store::DocumentStore;
+
 pub struct Backend {
     client: Client,
+    store: DocumentStore,
+    parser: Mutex<tree_sitter::Parser>,
 }
 
 impl Backend {
-    pub fn new(client: Client) -> Self {
-        Self { client }
+    pub fn new(client: Client, language: tree_sitter::Language) -> Self {
+        let mut parser = tree_sitter::Parser::new();
+        parser.set_language(&language).expect("failed to load GAMS grammar");
+        Self { client, store: DocumentStore::new(), parser: Mutex::new(parser) }
     }
 }
 
@@ -40,29 +48,33 @@ impl LanguageServer for Backend {
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
+        let uri = params.text_document.uri;
+        let text = params.text_document.text;
+        {
+            let mut parser = self.parser.lock().unwrap();
+            self.store.open(uri.clone(), &text, &mut parser);
+        }
         self.client
-            .log_message(
-                MessageType::INFO,
-                format!("opened: {}", params.text_document.uri),
-            )
+            .log_message(MessageType::INFO, format!("opened and parsed: {uri}"))
             .await;
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
+        let uri = params.text_document.uri;
+        {
+            let mut parser = self.parser.lock().unwrap();
+            self.store.change(&uri, &params.content_changes, &mut parser);
+        }
         self.client
-            .log_message(
-                MessageType::INFO,
-                format!("changed: {}", params.text_document.uri),
-            )
+            .log_message(MessageType::INFO, format!("reparsed: {uri}"))
             .await;
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
+        let uri = params.text_document.uri;
+        self.store.close(&uri);
         self.client
-            .log_message(
-                MessageType::INFO,
-                format!("closed: {}", params.text_document.uri),
-            )
+            .log_message(MessageType::INFO, format!("closed: {uri}"))
             .await;
     }
 }
