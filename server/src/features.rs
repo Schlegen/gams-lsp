@@ -1,8 +1,12 @@
-use tower_lsp::lsp_types::{Location, Position, Range, Url};
+use gams_precompiler::{Diagnostic as PrecompilerDiag, DollarVariable, Scope, Severity};
+use tower_lsp::lsp_types::{
+    CompletionItem, CompletionItemKind, Diagnostic, DiagnosticSeverity, Documentation,
+    Location, Position, Range, Url,
+};
 use tree_sitter::{Node, Point, Tree};
 
-use crate::document::SourceMap;
-use crate::symbols::Symbol;
+use crate::document::{GamsDocument, SourceMap};
+use crate::symbols::{Symbol, SymbolKind, SymbolTable};
 
 // ---------------------------------------------------------------------------
 // Coordinate helpers
@@ -186,6 +190,189 @@ pub fn sym_to_location(sym: &Symbol) -> Option<Location> {
 }
 
 // ---------------------------------------------------------------------------
+// 4d — Hover formatting
+// ---------------------------------------------------------------------------
+
+/// Format a markdown hover string for a GAMS symbol.
+pub fn format_hover_symbol(sym: &Symbol) -> String {
+    let mut sig = format!("**{}** `{}", sym.kind, sym.display_name);
+    if let Some(ref d) = sym.domain {
+        sig.push_str(d);
+    }
+    sig.push('`');
+    if let Some(ref desc) = sym.description {
+        sig.push_str(&format!("\n\n{desc}"));
+    }
+    sig
+}
+
+/// Format a markdown hover string for a dollar-layer variable.
+pub fn format_hover_dollar_var(dv: &DollarVariable) -> String {
+    let scope_kw = match dv.scope {
+        Scope::Local  => "$set",
+        Scope::Global => "$setglobal",
+        Scope::Env    => "$setenv",
+    };
+    let mut out = format!("**DollarVar** `%{}%` *({scope_kw})*", dv.name);
+    if let Some(val) = dv.current_value() {
+        out.push_str(&format!("\n\nCurrent value: `{val}`"));
+    }
+    out
+}
+
+/// If the character at `col` (0-based) falls inside a `%name%` span on `line`,
+/// return `name`.  Handles cursor on either `%` delimiter.
+pub fn dollar_var_name_at_position(line: &str, col: usize) -> Option<String> {
+    let bytes = line.as_bytes();
+    let n = bytes.len();
+    let mut i = 0;
+    while i < n {
+        if bytes[i] != b'%' {
+            i += 1;
+            continue;
+        }
+        let open = i;
+        let mut j = open + 1;
+        while j < n && bytes[j] != b'%' {
+            j += 1;
+        }
+        if j >= n {
+            break; // unclosed %
+        }
+        let close = j;
+        if col >= open && col <= close {
+            let name = &line[open + 1..close];
+            if !name.is_empty() && !name.contains('%') && !name.contains(' ') {
+                return Some(name.to_string());
+            }
+        }
+        i = close + 1;
+    }
+    None
+}
+
+// ---------------------------------------------------------------------------
+// 4e — Completion items
+// ---------------------------------------------------------------------------
+
+/// Build completion items for all GAMS symbols in `table`.
+pub fn symbol_completion_items(table: &SymbolTable) -> Vec<CompletionItem> {
+    table
+        .symbols
+        .iter()
+        .map(|sym| CompletionItem {
+            label: sym.display_name.clone(),
+            kind: Some(symbol_kind_to_completion_kind(&sym.kind)),
+            detail: sym.domain.as_ref().map(|d| format!("{}{d}", sym.display_name)),
+            documentation: sym
+                .description
+                .as_ref()
+                .map(|d| Documentation::String(d.clone())),
+            ..Default::default()
+        })
+        .collect()
+}
+
+/// Build completion items for all dollar-layer variables in `table`.
+pub fn dollar_var_completion_items(table: &SymbolTable) -> Vec<CompletionItem> {
+    table
+        .dollar_vars
+        .iter()
+        .map(|dv| CompletionItem {
+            label: dv.name.clone(),
+            kind: Some(CompletionItemKind::VARIABLE),
+            detail: dv.current_value().map(|v| format!("= {v}")),
+            ..Default::default()
+        })
+        .collect()
+}
+
+fn symbol_kind_to_completion_kind(kind: &SymbolKind) -> CompletionItemKind {
+    match kind {
+        SymbolKind::Set       => CompletionItemKind::ENUM,
+        SymbolKind::Scalar    => CompletionItemKind::CONSTANT,
+        SymbolKind::Parameter => CompletionItemKind::VARIABLE,
+        SymbolKind::Variable  => CompletionItemKind::VARIABLE,
+        SymbolKind::Equation  => CompletionItemKind::FUNCTION,
+        SymbolKind::Model     => CompletionItemKind::MODULE,
+        SymbolKind::Alias     => CompletionItemKind::REFERENCE,
+        SymbolKind::Acronym   => CompletionItemKind::ENUM_MEMBER,
+        SymbolKind::DollarVar => CompletionItemKind::VARIABLE,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 4f — Diagnostics
+// ---------------------------------------------------------------------------
+
+/// Collect all LSP diagnostics for a document:
+///   1. Dollar-layer errors/warnings from the precompiler.
+///   2. Tree-sitter ERROR nodes (syntax errors).
+pub fn collect_diagnostics(doc: &GamsDocument) -> Vec<Diagnostic> {
+    let mut diags = Vec::new();
+    dollar_diags(&doc.dollar_diagnostics, &mut diags);
+    if let Some(tree) = &doc.tree {
+        ts_error_diags(tree.root_node(), &doc.source_map, &mut diags);
+    }
+    diags
+}
+
+fn dollar_diags(src: &[PrecompilerDiag], out: &mut Vec<Diagnostic>) {
+    for d in src {
+        let line = d.loc.line.saturating_sub(1);
+        let col  = d.loc.col.saturating_sub(1);
+        let end_col = col + d.loc.length.max(1);
+        out.push(Diagnostic {
+            range: Range {
+                start: Position { line, character: col },
+                end:   Position { line, character: end_col },
+            },
+            severity: Some(severity_to_lsp(&d.severity)),
+            message: d.message.clone(),
+            source: Some("gams-lsp (dollar)".to_string()),
+            ..Default::default()
+        });
+    }
+}
+
+fn ts_error_diags(node: Node, sm: &SourceMap, out: &mut Vec<Diagnostic>) {
+    if node.is_error() {
+        out.push(Diagnostic {
+            range: node_range(sm, node),
+            severity: Some(DiagnosticSeverity::ERROR),
+            message: "syntax error".to_string(),
+            source: Some("gams-lsp (tree-sitter)".to_string()),
+            ..Default::default()
+        });
+        // Don't recurse into ERROR nodes to avoid spurious child diagnostics.
+        return;
+    }
+    if node.is_missing() {
+        out.push(Diagnostic {
+            range: node_range(sm, node),
+            severity: Some(DiagnosticSeverity::ERROR),
+            message: format!("missing `{}`", node.kind()),
+            source: Some("gams-lsp (tree-sitter)".to_string()),
+            ..Default::default()
+        });
+    }
+    for i in 0..node.child_count() {
+        if let Some(child) = node.child(i) {
+            ts_error_diags(child, sm, out);
+        }
+    }
+}
+
+fn severity_to_lsp(sev: &Severity) -> DiagnosticSeverity {
+    match sev {
+        Severity::Error   => DiagnosticSeverity::ERROR,
+        Severity::Warning => DiagnosticSeverity::WARNING,
+        Severity::Info    => DiagnosticSeverity::INFORMATION,
+        Severity::Hint    => DiagnosticSeverity::HINT,
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -304,5 +491,86 @@ mod tests {
         let (node, _) = refs.first().expect("should find x");
         let range = node_range(&d.source_map, *node);
         assert_eq!(range.start.line, 1); // original line 2 → LSP line 1
+    }
+
+    // -----------------------------------------------------------------------
+    // 4d — hover helpers
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn format_hover_symbol_with_domain() {
+        let d = doc("Parameter a(i,j) 'cost matrix';\n");
+        let sym = d.symbol_table.get("a").expect("should find a");
+        let text = format_hover_symbol(sym);
+        assert!(text.contains("Parameter"), "should mention kind");
+        assert!(text.contains("a"), "should include name");
+        assert!(text.contains("cost matrix"), "should include description");
+        assert!(text.contains("(i,j)") || sym.domain.is_some(), "should have domain");
+    }
+
+    #[test]
+    fn format_hover_symbol_without_domain() {
+        let d = doc("Scalar x 'x value' / 1 /;\n");
+        let sym = d.symbol_table.get("x").unwrap();
+        let text = format_hover_symbol(sym);
+        assert!(text.contains("Scalar"));
+        assert!(text.contains("`x`"));
+        assert!(text.contains("x value"));
+    }
+
+    #[test]
+    fn dollar_var_name_at_position_inside_var() {
+        let line = "x = %scenario%;";
+        // cursor on 's' of scenario (col 6)
+        assert_eq!(dollar_var_name_at_position(line, 6), Some("scenario".to_string()));
+    }
+
+    #[test]
+    fn dollar_var_name_at_position_on_opening_percent() {
+        let line = "%foo% + 1";
+        assert_eq!(dollar_var_name_at_position(line, 0), Some("foo".to_string()));
+    }
+
+    #[test]
+    fn dollar_var_name_at_position_outside_var() {
+        let line = "%foo% + 1";
+        // col 6 is outside any %...%
+        assert_eq!(dollar_var_name_at_position(line, 6), None);
+    }
+
+    #[test]
+    fn dollar_var_name_at_position_no_percent() {
+        assert_eq!(dollar_var_name_at_position("Scalar x / 1 /;", 3), None);
+    }
+
+    // -----------------------------------------------------------------------
+    // 4f — diagnostics
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn collect_diagnostics_finds_ts_error() {
+        // "???" is not valid GAMS; tree-sitter should produce an ERROR node
+        let d = doc("???\n");
+        let diags = collect_diagnostics(&d);
+        assert!(!diags.is_empty(), "should have at least one syntax error diagnostic");
+        assert!(diags.iter().any(|d| d.message.contains("syntax error")));
+    }
+
+    #[test]
+    fn collect_diagnostics_from_dollar_layer() {
+        // Unclosed $ontext → precompiler error
+        let d = doc("$ontext\nno offtext\n");
+        let diags = collect_diagnostics(&d);
+        assert!(
+            !diags.is_empty(),
+            "should have at least one dollar-layer diagnostic"
+        );
+    }
+
+    #[test]
+    fn collect_diagnostics_clean_file_is_empty() {
+        let d = doc("Scalar x / 1 /;\n");
+        let diags = collect_diagnostics(&d);
+        assert!(diags.is_empty(), "clean file should produce no diagnostics");
     }
 }

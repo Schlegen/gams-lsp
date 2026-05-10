@@ -53,6 +53,8 @@ pub struct Symbol {
     pub loc: SourceLocation,
     /// Inline description string from the declaration (quotes stripped), if any.
     pub description: Option<String>,
+    /// Domain qualifier, e.g. `"(i,j)"` for `ij(i,j)`, or `None` for plain identifiers.
+    pub domain: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -162,13 +164,14 @@ fn entries(decl: Node, body: &[u8], sm: &SourceMap, kind: SymbolKind, table: &mu
 
 /// Single-name declarations (table, variable_table): identifier is a direct child.
 fn single(decl: Node, body: &[u8], sm: &SourceMap, kind: SymbolKind, table: &mut SymbolTable) {
-    if let Some((id_node, display_name)) = name_node(decl, body) {
+    if let Some((id_node, display_name, domain)) = name_node_with_domain(decl, body) {
         table.symbols.push(Symbol {
             name: display_name.to_lowercase(),
             display_name,
             kind,
             loc: map_loc(id_node.start_position(), sm),
             description: description(decl, body),
+            domain,
         });
     }
 }
@@ -196,6 +199,7 @@ fn eq_def(def_node: Node, body: &[u8], sm: &SourceMap, table: &mut SymbolTable) 
         kind: SymbolKind::Equation,
         loc: map_loc(id_node.start_position(), sm),
         description: None,
+        domain: None,
     });
 }
 
@@ -220,6 +224,7 @@ fn alias(decl: Node, body: &[u8], sm: &SourceMap, table: &mut SymbolTable) {
             kind: SymbolKind::Alias,
             loc: map_loc(id_node.start_position(), sm),
             description: Some(desc.clone()),
+            domain: None,
         });
     }
 }
@@ -230,27 +235,34 @@ fn alias(decl: Node, body: &[u8], sm: &SourceMap, table: &mut SymbolTable) {
 
 /// Build a `Symbol` from an `*_entry` node.
 fn entry_symbol(entry: Node, body: &[u8], sm: &SourceMap, kind: SymbolKind) -> Option<Symbol> {
-    let (id_node, display_name) = name_node(entry, body)?;
+    let (id_node, display_name, domain) = name_node_with_domain(entry, body)?;
     Some(Symbol {
         name: display_name.to_lowercase(),
         display_name,
         kind,
         loc: map_loc(id_node.start_position(), sm),
         description: description(entry, body),
+        domain,
     })
 }
 
-/// Find the identifier that names this node.
-/// Prefers `identifier_with_domain` → first `identifier` child;
-/// falls back to plain `identifier`.
-fn name_node<'a>(node: Node<'a>, body: &[u8]) -> Option<(Node<'a>, String)> {
+/// Find the identifier that names this node, also returning any domain qualifier.
+/// For `ij(i,j)` returns `(id_node, "ij", Some("(i,j)"))`;
+/// for plain `x` returns `(id_node, "x", None)`.
+fn name_node_with_domain<'a>(
+    node: Node<'a>,
+    body: &[u8],
+) -> Option<(Node<'a>, String, Option<String>)> {
     // Try identifier_with_domain first.
     for child in children(node) {
         if child.kind() == "identifier_with_domain" {
+            let full = child.utf8_text(body).ok()?.to_string();
             for gc in children(child) {
                 if gc.kind() == "identifier" {
-                    let t = gc.utf8_text(body).ok()?.to_string();
-                    return Some((gc, t));
+                    let bare = gc.utf8_text(body).ok()?.to_string();
+                    let tail = full[bare.len()..].trim().to_string();
+                    let domain = if tail.is_empty() { None } else { Some(tail) };
+                    return Some((gc, bare, domain));
                 }
             }
         }
@@ -259,7 +271,7 @@ fn name_node<'a>(node: Node<'a>, body: &[u8]) -> Option<(Node<'a>, String)> {
     for child in children(node) {
         if child.kind() == "identifier" {
             let t = child.utf8_text(body).ok()?.to_string();
-            return Some((child, t));
+            return Some((child, t, None));
         }
     }
     None

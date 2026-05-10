@@ -1,0 +1,97 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "GAMS",
+  "scopeName": "source.gams",
+  "patterns": [
+    { "include": "#ontext_block" },
+    { "include": "#comment_line" },
+    { "include": "#dollar_directive" },
+    { "include": "#percent_var" },
+    { "include": "#string" },
+    { "include": "#equation_operator" },
+    { "include": "#equation_separator" },
+    { "include": "#keyword_declaration" },
+    { "include": "#keyword_control" },
+    { "include": "#keyword_vartype" },
+    { "include": "#keyword_builtin" },
+    { "include": "#constant" },
+    { "include": "#number" }
+  ],
+  "repository": {
+    "ontext_block": {
+      "begin": "(?i)^\\s*\\$\\$?ontext\\b",
+      "end": "(?i)^\\s*\\$\\$?offtext\\b",
+      "name": "comment.block.gams",
+      "beginCaptures": { "0": { "name": "keyword.control.directive.gams" } },
+      "endCaptures": { "0": { "name": "keyword.control.directive.gams" } }
+    },
+
+    "comment_line": {
+      "match": "^\\*.*$",
+      "name": "comment.line.star.gams"
+    },
+
+    "dollar_directive": {
+      "begin": "(?i)^(\\s*)(\\$\\$?)(\\w+)",
+      "end": "$",
+      "beginCaptures": {
+        "2": { "name": "punctuation.definition.directive.gams" },
+        "3": { "name": "keyword.control.directive.gams" }
+      },
+      "patterns": [
+        { "include": "#percent_var" },
+        { "include": "#string" }
+      ]
+    },
+
+    "percent_var": {
+      "match": "%[\\w.]+%",
+      "name": "variable.other.substitution.gams"
+    },
+
+    "string": {
+      "match": "'(?:[^']|'')*'",
+      "name": "string.quoted.single.gams"
+    },
+
+    "equation_operator": {
+      "match": "=[eEgGlLnN]=",
+      "name": "keyword.operator.equation.gams"
+    },
+
+    "equation_separator": {
+      "match": "\\.\\.",
+      "name": "keyword.operator.equation-separator.gams"
+    },
+
+    "keyword_declaration": {
+      "match": "(?i)\\b(sets?|parameters?|scalars?|variables?|equations?|tables?|acronyms?|model|solve|display|abort|option|alias|execute|put|putclose|file)\\b",
+      "name": "keyword.other.declaration.gams"
+    },
+
+    "keyword_control": {
+      "match": "(?i)\\b(loop|for|while|repeat|until|if|elseif|else|endif|break|continue|return|using|maximizing|minimizing|lp|nlp|mip|minlp|qcp|miqcp|mcp|cns|dnlp|rminlp|rmip|emp)\\b",
+      "name": "keyword.control.gams"
+    },
+
+    "keyword_vartype": {
+      "match": "(?i)\\b(positive|negative|binary|free|integer|sos1|sos2)\\b",
+      "name": "storage.modifier.gams"
+    },
+
+    "keyword_builtin": {
+      "match": "(?i)\\b(sum|prod|smin|smax|min|max|ord|card|abs|sqr|sqrt|exp|log|log10|sin|cos|tan|arctan|arcsin|arccos|ceil|floor|round|trunc|sign|power|mod|div|mapval|errorf|normal|uniform|uniformint|gamma|beta|binomial|sleep|execseed|timeelapsed|timeerror|gamsversion)\\b",
+      "name": "support.function.builtin.gams"
+    },
+
+    "constant": {
+      "match": "(?i)\\b(yes|no|true|false|inf|na|eps|undf|all)\\b",
+      "name": "constant.language.gams"
+    },
+
+    "number": {
+      "match": "\\b\\d+(\\.\\d+)?([eE][+-]?\\d+)?\\b",
+      "name": "constant.numeric.gams"
+    }
+  }
+}

@@ -38,9 +38,12 @@ gams-lsp/
 │       └── features.rs   coordinate helpers, identifier_at_position(), find_references_in_tree()
 │
 ├── client/               VS Code extension (TypeScript)
-│   ├── src/extension.ts  spawns the server binary and starts the LanguageClient
-│   ├── package.json      extension manifest — language id, file associations
-│   └── language-configuration.json  comment characters, bracket pairs
+│   ├── src/extension.ts        spawns the server binary and starts the LanguageClient
+│   ├── syntaxes/
+│   │   └── gams.tmLanguage.json  TextMate grammar (syntax highlighting, no server needed)
+│   ├── package.json            extension manifest — language id, grammar, file associations
+│   ├── language-configuration.json  comment characters, bracket pairs, folding markers
+│   └── .vscodeignore           files excluded when packaging a .vsix
 │
 └── tree-sitter-gams/     symlink → ../tree-sitter-gams (C grammar)
 ```
@@ -189,6 +192,57 @@ Implemented handlers:
 
 ---
 
+## VS Code extension (`client/`)
+
+The extension is written in TypeScript and uses the `vscode-languageclient` package to start the Rust server and relay LSP messages.
+
+### `syntaxes/gams.tmLanguage.json`
+
+A TextMate grammar that provides syntax highlighting independently of the language server — it works even before the server starts. Scopes covered:
+
+| Pattern | Scope |
+|---|---|
+| `$ontext` … `$offtext` | `comment.block.gams` |
+| `*` at column 0 | `comment.line.star.gams` |
+| `$keyword` / `$$keyword` directives | `keyword.control.directive.gams` |
+| `%var%` substitutions | `variable.other.substitution.gams` |
+| `'single-quoted strings'` | `string.quoted.single.gams` |
+| `=e=` `=g=` `=l=` `=n=` | `keyword.operator.equation.gams` |
+| `..` (equation separator) | `keyword.operator.equation-separator.gams` |
+| `Sets`, `Parameters`, `Model`, … | `keyword.other.declaration.gams` |
+| `Loop`, `If`, `ElseIf`, … | `keyword.control.gams` |
+| `Positive`, `Binary`, `Free`, … | `storage.modifier.gams` |
+| `sum`, `ord`, `card`, `min`, … | `support.function.builtin.gams` |
+| `yes`, `no`, `inf`, `eps`, … | `constant.language.gams` |
+| Numbers | `constant.numeric.gams` |
+
+To inspect which scope applies to a token: put the cursor on it and run **"Developer: Inspect Editor Tokens and Scopes"** (`Ctrl+Shift+P`).
+
+### `package.json`
+
+The extension manifest. Key contributions:
+
+- **`contributes.languages`** — registers the `gams` language id, associates `*.gms` and `*.gms2` files, points to `language-configuration.json`.
+- **`contributes.grammars`** — wires `syntaxes/gams.tmLanguage.json` to the `gams` language id.
+
+The `package-vsix` npm script builds a release binary and packages a self-contained `.vsix` (see Build below).
+
+### `language-configuration.json`
+
+Editor behaviour for `.gms` files: `*` as the line-comment character, bracket pairs `()` and `[]`, auto-closing and surrounding pairs for `'` and `"`, a `wordPattern` matching GAMS identifiers, and folding markers for `$ifthen`/`$endif` blocks.
+
+### `src/extension.ts`
+
+The `activate` function calls `findServerBinary()`, which tries three locations in order:
+
+1. `bin/gams-lsp-server` — bundled inside a packaged `.vsix`.
+2. `../target/release/gams-lsp-server` — release dev build.
+3. `../target/debug/gams-lsp-server` — debug dev build.
+
+If none exist it shows a VS Code error message with the paths it searched. This means the extension works both when installed from a `.vsix` (location 1) and when launched via F5 during development (location 3).
+
+---
+
 ## Build
 
 ```bash
@@ -204,6 +258,12 @@ To compile the VS Code extension:
 
 ```bash
 cd client && npm install && npm run compile
+```
+
+To package a self-contained `.vsix` (builds the release Rust binary, copies it into `client/bin/`, then calls `vsce package`):
+
+```bash
+cd client && npm run package-vsix
 ```
 
 ---
@@ -260,6 +320,60 @@ Current fixtures:
 ### Adding a server test
 
 Use the `parse_and_collect` helper in `symbols::tests`, or the `doc()` helper in `features::tests` — both create a fully parsed `GamsDocument` from a literal GAMS string. For store tests use `DocumentStore::new()` directly.
+
+---
+
+## Testing the VS Code extension
+
+There are two ways to test, depending on whether you want a fast iteration loop or a production-like install.
+
+### Option A — Development mode (F5)
+
+Best for iterating on the extension or the Rust server.
+
+1. Build the server:
+   ```bash
+   cargo build -p gams-lsp-server
+   ```
+
+2. Open the `gams-lsp` folder in VS Code. Press **F5** (or Run → Start Debugging → **"Launch Extension"**). VS Code compiles the TypeScript (`npm run compile`) as a pre-launch task, then opens a second **Extension Development Host** window with the extension loaded from `client/`.
+
+3. In the Extension Development Host, open any `.gms` file. The extension activates automatically.
+
+4. To verify the server started: open the **Output** panel (`Ctrl+Shift+U`) and select **"GAMS Language Server"** in the dropdown.
+
+5. Test the features:
+
+   | Action | Expected behaviour |
+   |---|---|
+   | Open a `.gms` file | Syntax highlighting (colours, `*` comments grey, `$` directives purple, …) |
+   | Click on a symbol name | All occurrences highlighted (Write = declaration, Read = usage) |
+   | `F12` on a symbol | Jumps to declaration |
+   | `Shift+F12` on a symbol | Lists all references across included files |
+
+6. After editing Rust code, run `cargo build -p gams-lsp-server`, then reload the Host window (`Ctrl+Shift+P` → **"Reload Window"**). TypeScript changes are recompiled automatically by the pre-launch task on the next F5.
+
+### Option B — Packaged `.vsix` (production install)
+
+Best for testing exactly what a user would install.
+
+1. Package (builds the release binary and creates the `.vsix`):
+   ```bash
+   cd client && npm run package-vsix
+   ```
+   This produces `gams-lsp-client-0.1.0.vsix` in `client/`.
+
+2. Install it into your main VS Code:
+   ```bash
+   code --install-extension gams-lsp-client-0.1.0.vsix
+   ```
+
+3. Restart VS Code, open a `.gms` file, and test the same features as above.
+
+4. Uninstall when done:
+   ```bash
+   code --uninstall-extension artelys.gams-lsp-client
+   ```
 
 ---
 

@@ -3,6 +3,7 @@
   "displayName": "GAMS Language Support",
   "description": "Language server support for the GAMS modelling language",
   "version": "0.1.0",
+  "publisher": "schlegen",
   "engines": { "vscode": "^1.85.0" },
   "activationEvents": [],
   "main": "./out/extension.js",
@@ -14,11 +15,19 @@
         "extensions": [".gms", ".gms2"],
         "configuration": "./language-configuration.json"
       }
+    ],
+    "grammars": [
+      {
+        "language": "gams",
+        "scopeName": "source.gams",
+        "path": "./syntaxes/gams.tmLanguage.json"
+      }
     ]
   },
   "scripts": {
     "compile": "tsc -p tsconfig.json",
-    "watch": "tsc -watch -p tsconfig.json"
+    "watch": "tsc -watch -p tsconfig.json",
+    "package-vsix": "cargo build --release --manifest-path ../Cargo.toml && mkdir -p bin && cp ../target/release/gams-lsp-server bin/ && npx @vscode/vsce package --no-dependencies"
   },
   "dependencies": {
     "vscode-languageclient": "^9.0.1"
@@ -26,6 +35,7 @@
   "devDependencies": {
     "@types/vscode": "^1.85.0",
     "@types/node": "^20.0.0",
-    "typescript": "^5.0.0"
+    "typescript": "^5.0.0",
+    "@vscode/vsce": "^3.0.0"
   }
 }

@@ -407,15 +407,15 @@ Tasks:
 **Goal:** polished editor experience for `.gms` files.
 
 Tasks:
-- [ ] `client/package.json`: `activationEvents`, `contributes.languages` for `gams`,
+- [x] `client/package.json`: `activationEvents`, `contributes.languages` for `gams`,
       file associations `*.gms`, `*.gms2`
-- [ ] `client/syntaxes/gams.tmLanguage.json`: TextMate grammar for basic syntax
+- [x] `client/syntaxes/gams.tmLanguage.json`: TextMate grammar for basic syntax
       highlighting (keywords, strings, `$` directives, `%var%` references,
       `*` comment lines)
-- [ ] `client/language-configuration.json`: comment characters, bracket pairs,
+- [x] `client/language-configuration.json`: comment characters, bracket pairs,
       auto-close pairs
-- [ ] `client/src/extension.ts`: start server process, `LanguageClient` wiring
-- [ ] Package and test the `.vsix` locally
+- [x] `client/src/extension.ts`: start server process, `LanguageClient` wiring
+- [x] Package and test the `.vsix` locally (`npm run package-vsix` in `client/`)
 
 ---
 

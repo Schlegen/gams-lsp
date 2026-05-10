@@ -7,9 +7,14 @@ target/
 # Node / VS Code extension
 client/node_modules/
 client/out/
+client/bin/
 
 # IDE
 .idea/
 
 # Personal notes
 my_ressources/
+
+# packaged extension
+*.vsix
+
