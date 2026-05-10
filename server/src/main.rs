@@ -1,7 +1,9 @@
 mod backend;
 mod document;
+mod features;
 mod language;
 mod store;
+mod symbols;
 
 use backend::Backend;
 use tower_lsp::{LspService, Server};

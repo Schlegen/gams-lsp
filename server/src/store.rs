@@ -5,6 +5,7 @@ use dashmap::DashMap;
 use tower_lsp::lsp_types::{TextDocumentContentChangeEvent, Url};
 
 use crate::document::GamsDocument;
+use crate::symbols::SymbolTable;
 
 // ---------------------------------------------------------------------------
 // DocumentStore
@@ -85,6 +86,85 @@ impl DocumentStore {
             }
             self.load_includes(&include_uri, parser, visited);
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Transitive include URI set
+// ---------------------------------------------------------------------------
+
+impl DocumentStore {
+    /// All URIs reachable from `uri` via transitive `$include`s, including `uri`
+    /// itself.  Used by the references feature to scope searches to the current
+    /// include graph.
+    pub fn transitive_uris(&self, uri: &Url) -> Vec<Url> {
+        let mut visited = HashSet::new();
+        let mut result = Vec::new();
+        self.collect_uris_recursive(uri, &mut visited, &mut result);
+        result
+    }
+
+    fn collect_uris_recursive(
+        &self,
+        uri: &Url,
+        visited: &mut HashSet<Url>,
+        result: &mut Vec<Url>,
+    ) {
+        if !visited.insert(uri.clone()) {
+            return;
+        }
+        result.push(uri.clone());
+        let Some(doc) = self.inner.get(uri) else { return };
+        let include_paths = doc.include_paths();
+        let base_file = uri_to_path(uri);
+        drop(doc);
+        let base_dir = base_file.parent().unwrap_or(Path::new("."));
+        for rel_path in include_paths {
+            if rel_path.contains('%') {
+                continue;
+            }
+            let Ok(canonical) = base_dir.join(&rel_path).canonicalize() else { continue };
+            let Ok(inc_uri) = Url::from_file_path(&canonical) else { continue };
+            self.collect_uris_recursive(&inc_uri, visited, result);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Symbol lookup across includes
+// ---------------------------------------------------------------------------
+
+impl DocumentStore {
+    /// Merged symbol table for `uri` and all its transitive `$include`s.
+    pub fn merged_symbols(&self, uri: &Url) -> SymbolTable {
+        let mut visited = HashSet::new();
+        self.collect_symbols_recursive(uri, &mut visited)
+    }
+
+    fn collect_symbols_recursive(
+        &self,
+        uri: &Url,
+        visited: &mut HashSet<Url>,
+    ) -> SymbolTable {
+        if !visited.insert(uri.clone()) {
+            return SymbolTable::new();
+        }
+        let Some(doc) = self.inner.get(uri) else { return SymbolTable::new() };
+        let mut table = doc.symbol_table.clone();
+        let include_paths = doc.include_paths();
+        let base_file = uri_to_path(uri);
+        drop(doc); // release DashMap guard before recursing
+
+        let base_dir = base_file.parent().unwrap_or(Path::new("."));
+        for rel_path in include_paths {
+            if rel_path.contains('%') {
+                continue;
+            }
+            let Ok(canonical) = base_dir.join(&rel_path).canonicalize() else { continue };
+            let Ok(inc_uri) = Url::from_file_path(&canonical) else { continue };
+            table.merge(self.collect_symbols_recursive(&inc_uri, visited));
+        }
+        table
     }
 }
 

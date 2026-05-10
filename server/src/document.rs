@@ -5,6 +5,8 @@ use ropey::Rope;
 use tower_lsp::lsp_types::{Position, TextDocumentContentChangeEvent};
 use tree_sitter::Tree;
 
+use crate::symbols::{collect_symbols, SymbolTable};
+
 // ---------------------------------------------------------------------------
 // Source map — maps tree-sitter (body-text) coordinates → original file lines
 // ---------------------------------------------------------------------------
@@ -18,6 +20,11 @@ pub struct SourceMap {
 impl SourceMap {
     pub fn orig_line(&self, body_line: usize) -> Option<u32> {
         self.body_line_to_orig.get(body_line).copied()
+    }
+
+    /// Reverse lookup: 1-based original line → 0-based body-text row.
+    pub fn orig_to_body_line(&self, orig_line: u32) -> Option<usize> {
+        self.body_line_to_orig.iter().position(|&l| l == orig_line)
     }
 }
 
@@ -34,6 +41,8 @@ pub struct GamsDocument {
     pub tree: Option<Tree>,
     /// Diagnostics produced by the dollar-layer lexer.
     pub dollar_diagnostics: Vec<Diagnostic>,
+    /// Symbols declared in this file (GAMS + dollar-layer variables).
+    pub symbol_table: SymbolTable,
 }
 
 impl GamsDocument {
@@ -42,7 +51,10 @@ impl GamsDocument {
         let (dollar_tokens, dollar_diagnostics) = run_lexer(file.clone(), text);
         let (body_text, source_map) = build_body(&dollar_tokens, &file);
         let tree = parser.parse(body_text.as_bytes(), None);
-        Self { rope, dollar_tokens, body_text, source_map, tree, dollar_diagnostics }
+        let symbol_table = tree.as_ref().map_or_else(SymbolTable::new, |t| {
+            collect_symbols(t, body_text.as_bytes(), &source_map, &dollar_tokens)
+        });
+        Self { rope, dollar_tokens, body_text, source_map, tree, dollar_diagnostics, symbol_table }
     }
 
     pub fn update(
@@ -58,6 +70,9 @@ impl GamsDocument {
         let (dollar_tokens, dollar_diagnostics) = run_lexer(file.to_path_buf(), &text);
         let (body_text, source_map) = build_body(&dollar_tokens, file);
         self.tree = parser.parse(body_text.as_bytes(), None);
+        self.symbol_table = self.tree.as_ref().map_or_else(SymbolTable::new, |t| {
+            collect_symbols(t, body_text.as_bytes(), &source_map, &dollar_tokens)
+        });
         self.dollar_tokens = dollar_tokens;
         self.body_text = body_text;
         self.source_map = source_map;
